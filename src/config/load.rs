@@ -257,6 +257,12 @@ impl ProxyConfig {
             ));
         }
 
+        if config.access.user_max_unique_ips_window_secs == 0 {
+            return Err(ProxyError::Config(
+                "access.user_max_unique_ips_window_secs must be > 0".to_string(),
+            ));
+        }
+
         if config.general.me_reinit_every_secs == 0 {
             return Err(ProxyError::Config(
                 "general.me_reinit_every_secs must be > 0".to_string(),
@@ -728,6 +734,14 @@ mod tests {
             default_api_minimal_runtime_cache_ttl_ms()
         );
         assert_eq!(cfg.access.users, default_access_users());
+        assert_eq!(
+            cfg.access.user_max_unique_ips_mode,
+            UserMaxUniqueIpsMode::default()
+        );
+        assert_eq!(
+            cfg.access.user_max_unique_ips_window_secs,
+            default_user_max_unique_ips_window_secs()
+        );
     }
 
     #[test]

@@ -423,6 +423,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // IP Tracker initialization
     let ip_tracker = Arc::new(UserIpTracker::new());
     ip_tracker.load_limits(&config.access.user_max_unique_ips).await;
+    ip_tracker
+        .set_limit_policy(
+            config.access.user_max_unique_ips_mode,
+            config.access.user_max_unique_ips_window_secs,
+        )
+        .await;
     
     if !config.access.user_max_unique_ips.is_empty() {
         info!("IP limits configured for {} users", config.access.user_max_unique_ips.len());
@@ -843,6 +849,51 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     cfg.general.me_route_backpressure_high_timeout_ms,
                     cfg.general.me_route_backpressure_high_watermark_pct,
                 );
+            }
+        }
+    });
+
+    let ip_tracker_policy = ip_tracker.clone();
+    let mut config_rx_ip_limits = config_rx.clone();
+    tokio::spawn(async move {
+        let mut prev_limits = config_rx_ip_limits
+            .borrow()
+            .access
+            .user_max_unique_ips
+            .clone();
+        let mut prev_mode = config_rx_ip_limits
+            .borrow()
+            .access
+            .user_max_unique_ips_mode;
+        let mut prev_window = config_rx_ip_limits
+            .borrow()
+            .access
+            .user_max_unique_ips_window_secs;
+
+        loop {
+            if config_rx_ip_limits.changed().await.is_err() {
+                break;
+            }
+            let cfg = config_rx_ip_limits.borrow_and_update().clone();
+
+            if prev_limits != cfg.access.user_max_unique_ips {
+                ip_tracker_policy
+                    .load_limits(&cfg.access.user_max_unique_ips)
+                    .await;
+                prev_limits = cfg.access.user_max_unique_ips.clone();
+            }
+
+            if prev_mode != cfg.access.user_max_unique_ips_mode
+                || prev_window != cfg.access.user_max_unique_ips_window_secs
+            {
+                ip_tracker_policy
+                    .set_limit_policy(
+                        cfg.access.user_max_unique_ips_mode,
+                        cfg.access.user_max_unique_ips_window_secs,
+                    )
+                    .await;
+                prev_mode = cfg.access.user_max_unique_ips_mode;
+                prev_window = cfg.access.user_max_unique_ips_window_secs;
             }
         }
     });

@@ -12,6 +12,7 @@ const DEFAULT_ME_SINGLE_ENDPOINT_SHADOW_WRITERS: u8 = 2;
 const DEFAULT_ME_ADAPTIVE_FLOOR_IDLE_SECS: u64 = 90;
 const DEFAULT_ME_ADAPTIVE_FLOOR_MIN_WRITERS_SINGLE_ENDPOINT: u8 = 1;
 const DEFAULT_ME_ADAPTIVE_FLOOR_RECOVER_GRACE_SECS: u64 = 180;
+const DEFAULT_USER_MAX_UNIQUE_IPS_WINDOW_SECS: u64 = 30;
 const DEFAULT_UPSTREAM_CONNECT_RETRY_ATTEMPTS: u32 = 2;
 const DEFAULT_UPSTREAM_UNHEALTHY_FAIL_THRESHOLD: u32 = 5;
 const DEFAULT_LISTEN_ADDR_IPV6: &str = "::";
@@ -462,6 +463,10 @@ pub(crate) fn default_access_users() -> HashMap<String, String> {
         DEFAULT_ACCESS_USER.to_string(),
         DEFAULT_ACCESS_SECRET.to_string(),
     )])
+}
+
+pub(crate) fn default_user_max_unique_ips_window_secs() -> u64 {
+    DEFAULT_USER_MAX_UNIQUE_IPS_WINDOW_SECS
 }
 
 // Custom deserializer helpers

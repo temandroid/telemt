@@ -287,6 +287,7 @@ pub(super) async fn delete_user(
         .map_err(|e| ApiFailure::bad_request(format!("config validation failed: {}", e)))?;
     let revision = save_config_to_disk(&shared.config_path, &cfg).await?;
     drop(_guard);
+    shared.ip_tracker.remove_user_limit(user).await;
     shared.ip_tracker.clear_user_ips(user).await;
 
     Ok((user.to_string(), revision))

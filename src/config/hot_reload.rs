@@ -438,6 +438,16 @@ fn log_changes(
             new_hot.access.user_max_unique_ips.len()
         );
     }
+    if old_hot.access.user_max_unique_ips_mode != new_hot.access.user_max_unique_ips_mode
+        || old_hot.access.user_max_unique_ips_window_secs
+            != new_hot.access.user_max_unique_ips_window_secs
+    {
+        info!(
+            "config reload: user_max_unique_ips policy mode={:?} window={}s",
+            new_hot.access.user_max_unique_ips_mode,
+            new_hot.access.user_max_unique_ips_window_secs
+        );
+    }
 }
 
 /// Load config, validate, diff against current, and broadcast if changed.

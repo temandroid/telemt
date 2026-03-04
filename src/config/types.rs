@@ -183,6 +183,19 @@ impl MeFloorMode {
     }
 }
 
+/// Per-user unique source IP limit mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UserMaxUniqueIpsMode {
+    /// Count only currently active source IPs.
+    #[default]
+    ActiveWindow,
+    /// Count source IPs seen within the recent time window.
+    TimeWindow,
+    /// Enforce both active and recent-window limits at the same time.
+    Combined,
+}
+
 /// Telemetry controls for hot-path counters and ME diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TelemetryConfig {
@@ -1045,6 +1058,12 @@ pub struct AccessConfig {
     #[serde(default)]
     pub user_max_unique_ips: HashMap<String, usize>,
 
+    #[serde(default)]
+    pub user_max_unique_ips_mode: UserMaxUniqueIpsMode,
+
+    #[serde(default = "default_user_max_unique_ips_window_secs")]
+    pub user_max_unique_ips_window_secs: u64,
+
     #[serde(default = "default_replay_check_len")]
     pub replay_check_len: usize,
 
@@ -1064,6 +1083,8 @@ impl Default for AccessConfig {
             user_expirations: HashMap::new(),
             user_data_quota: HashMap::new(),
             user_max_unique_ips: HashMap::new(),
+            user_max_unique_ips_mode: UserMaxUniqueIpsMode::default(),
+            user_max_unique_ips_window_secs: default_user_max_unique_ips_window_secs(),
             replay_check_len: default_replay_check_len(),
             replay_window_secs: default_replay_window_secs(),
             ignore_time_skew: false,
