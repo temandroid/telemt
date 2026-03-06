@@ -114,6 +114,11 @@ pub(crate) fn default_api_minimal_runtime_cache_ttl_ms() -> u64 {
     1000
 }
 
+pub(crate) fn default_api_runtime_edge_enabled() -> bool { false }
+pub(crate) fn default_api_runtime_edge_cache_ttl_ms() -> u64 { 1000 }
+pub(crate) fn default_api_runtime_edge_top_n() -> usize { 10 }
+pub(crate) fn default_api_runtime_edge_events_capacity() -> usize { 256 }
+
 pub(crate) fn default_proxy_protocol_header_timeout_ms() -> u64 {
     500
 }

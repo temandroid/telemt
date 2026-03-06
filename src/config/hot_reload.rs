@@ -312,6 +312,12 @@ fn warn_non_hot_changes(old: &ProxyConfig, new: &ProxyConfig, non_hot_changed: b
         || old.server.api.minimal_runtime_enabled != new.server.api.minimal_runtime_enabled
         || old.server.api.minimal_runtime_cache_ttl_ms
             != new.server.api.minimal_runtime_cache_ttl_ms
+        || old.server.api.runtime_edge_enabled != new.server.api.runtime_edge_enabled
+        || old.server.api.runtime_edge_cache_ttl_ms
+            != new.server.api.runtime_edge_cache_ttl_ms
+        || old.server.api.runtime_edge_top_n != new.server.api.runtime_edge_top_n
+        || old.server.api.runtime_edge_events_capacity
+            != new.server.api.runtime_edge_events_capacity
         || old.server.api.read_only != new.server.api.read_only
     {
         warned = true;

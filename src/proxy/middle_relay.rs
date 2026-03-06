@@ -237,6 +237,7 @@ where
 
     stats.increment_user_connects(&user);
     stats.increment_user_curr_connects(&user);
+    stats.increment_current_connections_me();
 
     // Per-user ad_tag from access.user_ad_tags; fallback to general.ad_tag (hot-reloadable)
     let user_tag: Option<Vec<u8>> = config
@@ -466,6 +467,7 @@ where
         "ME relay cleanup"
     );
     me_pool.registry().unregister(conn_id).await;
+    stats.decrement_current_connections_me();
     stats.decrement_user_curr_connects(&user);
     result
 }

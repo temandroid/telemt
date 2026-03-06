@@ -918,6 +918,22 @@ pub struct ApiConfig {
     #[serde(default = "default_api_minimal_runtime_cache_ttl_ms")]
     pub minimal_runtime_cache_ttl_ms: u64,
 
+    /// Enables runtime edge endpoints with optional cached aggregation.
+    #[serde(default = "default_api_runtime_edge_enabled")]
+    pub runtime_edge_enabled: bool,
+
+    /// Cache TTL for runtime edge aggregation payloads in milliseconds.
+    #[serde(default = "default_api_runtime_edge_cache_ttl_ms")]
+    pub runtime_edge_cache_ttl_ms: u64,
+
+    /// Top-N limit for edge connection leaderboard payloads.
+    #[serde(default = "default_api_runtime_edge_top_n")]
+    pub runtime_edge_top_n: usize,
+
+    /// Ring-buffer capacity for runtime edge control-plane events.
+    #[serde(default = "default_api_runtime_edge_events_capacity")]
+    pub runtime_edge_events_capacity: usize,
+
     /// Read-only mode: mutating endpoints are rejected.
     #[serde(default)]
     pub read_only: bool,
@@ -933,6 +949,10 @@ impl Default for ApiConfig {
             request_body_limit_bytes: default_api_request_body_limit_bytes(),
             minimal_runtime_enabled: default_api_minimal_runtime_enabled(),
             minimal_runtime_cache_ttl_ms: default_api_minimal_runtime_cache_ttl_ms(),
+            runtime_edge_enabled: default_api_runtime_edge_enabled(),
+            runtime_edge_cache_ttl_ms: default_api_runtime_edge_cache_ttl_ms(),
+            runtime_edge_top_n: default_api_runtime_edge_top_n(),
+            runtime_edge_events_capacity: default_api_runtime_edge_events_capacity(),
             read_only: false,
         }
     }

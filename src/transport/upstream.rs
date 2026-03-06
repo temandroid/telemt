@@ -202,6 +202,15 @@ pub struct UpstreamApiSnapshot {
     pub upstreams: Vec<UpstreamApiItemSnapshot>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct UpstreamApiPolicySnapshot {
+    pub connect_retry_attempts: u32,
+    pub connect_retry_backoff_ms: u64,
+    pub connect_budget_ms: u64,
+    pub unhealthy_fail_threshold: u32,
+    pub connect_failfast_hard_errors: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UpstreamEgressInfo {
     pub route_kind: UpstreamRouteKind,
@@ -313,6 +322,16 @@ impl UpstreamManager {
         }
 
         Some(UpstreamApiSnapshot { summary, upstreams })
+    }
+
+    pub fn api_policy_snapshot(&self) -> UpstreamApiPolicySnapshot {
+        UpstreamApiPolicySnapshot {
+            connect_retry_attempts: self.connect_retry_attempts,
+            connect_retry_backoff_ms: self.connect_retry_backoff.as_millis() as u64,
+            connect_budget_ms: self.connect_budget.as_millis() as u64,
+            unhealthy_fail_threshold: self.unhealthy_fail_threshold,
+            connect_failfast_hard_errors: self.connect_failfast_hard_errors,
+        }
     }
 
     #[cfg(unix)]

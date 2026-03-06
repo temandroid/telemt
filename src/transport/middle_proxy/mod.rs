@@ -10,6 +10,7 @@ mod pool_init;
 mod pool_nat;
 mod pool_refill;
 mod pool_reinit;
+mod pool_runtime_api;
 mod pool_writer;
 mod ping;
 mod reader;

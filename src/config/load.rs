@@ -462,6 +462,24 @@ impl ProxyConfig {
             ));
         }
 
+        if config.server.api.runtime_edge_cache_ttl_ms > 60_000 {
+            return Err(ProxyError::Config(
+                "server.api.runtime_edge_cache_ttl_ms must be within [0, 60000]".to_string(),
+            ));
+        }
+
+        if !(1..=1000).contains(&config.server.api.runtime_edge_top_n) {
+            return Err(ProxyError::Config(
+                "server.api.runtime_edge_top_n must be within [1, 1000]".to_string(),
+            ));
+        }
+
+        if !(16..=4096).contains(&config.server.api.runtime_edge_events_capacity) {
+            return Err(ProxyError::Config(
+                "server.api.runtime_edge_events_capacity must be within [16, 4096]".to_string(),
+            ));
+        }
+
         if config.server.api.listen.parse::<SocketAddr>().is_err() {
             return Err(ProxyError::Config(
                 "server.api.listen must be in IP:PORT format".to_string(),
@@ -802,6 +820,22 @@ mod tests {
             cfg.server.api.minimal_runtime_cache_ttl_ms,
             default_api_minimal_runtime_cache_ttl_ms()
         );
+        assert_eq!(
+            cfg.server.api.runtime_edge_enabled,
+            default_api_runtime_edge_enabled()
+        );
+        assert_eq!(
+            cfg.server.api.runtime_edge_cache_ttl_ms,
+            default_api_runtime_edge_cache_ttl_ms()
+        );
+        assert_eq!(
+            cfg.server.api.runtime_edge_top_n,
+            default_api_runtime_edge_top_n()
+        );
+        assert_eq!(
+            cfg.server.api.runtime_edge_events_capacity,
+            default_api_runtime_edge_events_capacity()
+        );
         assert_eq!(cfg.access.users, default_access_users());
         assert_eq!(
             cfg.access.user_max_unique_ips_mode,
@@ -917,6 +951,22 @@ mod tests {
         assert_eq!(
             server.api.minimal_runtime_cache_ttl_ms,
             default_api_minimal_runtime_cache_ttl_ms()
+        );
+        assert_eq!(
+            server.api.runtime_edge_enabled,
+            default_api_runtime_edge_enabled()
+        );
+        assert_eq!(
+            server.api.runtime_edge_cache_ttl_ms,
+            default_api_runtime_edge_cache_ttl_ms()
+        );
+        assert_eq!(
+            server.api.runtime_edge_top_n,
+            default_api_runtime_edge_top_n()
+        );
+        assert_eq!(
+            server.api.runtime_edge_events_capacity,
+            default_api_runtime_edge_events_capacity()
         );
 
         let access = AccessConfig::default();
@@ -1562,6 +1612,72 @@ mod tests {
         std::fs::write(&path, toml).unwrap();
         let err = ProxyConfig::load(&path).unwrap_err().to_string();
         assert!(err.contains("server.api.minimal_runtime_cache_ttl_ms must be within [0, 60000]"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn api_runtime_edge_cache_ttl_out_of_range_is_rejected() {
+        let toml = r#"
+            [server.api]
+            enabled = true
+            listen = "127.0.0.1:9091"
+            runtime_edge_cache_ttl_ms = 70000
+
+            [censorship]
+            tls_domain = "example.com"
+
+            [access.users]
+            user = "00000000000000000000000000000000"
+        "#;
+        let dir = std::env::temp_dir();
+        let path = dir.join("telemt_api_runtime_edge_cache_ttl_invalid_test.toml");
+        std::fs::write(&path, toml).unwrap();
+        let err = ProxyConfig::load(&path).unwrap_err().to_string();
+        assert!(err.contains("server.api.runtime_edge_cache_ttl_ms must be within [0, 60000]"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn api_runtime_edge_top_n_out_of_range_is_rejected() {
+        let toml = r#"
+            [server.api]
+            enabled = true
+            listen = "127.0.0.1:9091"
+            runtime_edge_top_n = 0
+
+            [censorship]
+            tls_domain = "example.com"
+
+            [access.users]
+            user = "00000000000000000000000000000000"
+        "#;
+        let dir = std::env::temp_dir();
+        let path = dir.join("telemt_api_runtime_edge_top_n_invalid_test.toml");
+        std::fs::write(&path, toml).unwrap();
+        let err = ProxyConfig::load(&path).unwrap_err().to_string();
+        assert!(err.contains("server.api.runtime_edge_top_n must be within [1, 1000]"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn api_runtime_edge_events_capacity_out_of_range_is_rejected() {
+        let toml = r#"
+            [server.api]
+            enabled = true
+            listen = "127.0.0.1:9091"
+            runtime_edge_events_capacity = 8
+
+            [censorship]
+            tls_domain = "example.com"
+
+            [access.users]
+            user = "00000000000000000000000000000000"
+        "#;
+        let dir = std::env::temp_dir();
+        let path = dir.join("telemt_api_runtime_edge_events_capacity_invalid_test.toml");
+        std::fs::write(&path, toml).unwrap();
+        let err = ProxyConfig::load(&path).unwrap_err().to_string();
+        assert!(err.contains("server.api.runtime_edge_events_capacity must be within [16, 4096]"));
         let _ = std::fs::remove_file(path);
     }
 
