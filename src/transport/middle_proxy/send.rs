@@ -375,9 +375,14 @@ impl MePool {
                 match w.tx.try_send(WriterCommand::Data(payload.clone())) {
                     Ok(()) => {
                         self.stats.increment_me_writer_pick_success_try_total(pick_mode);
-                        self.registry
-                            .bind_writer(conn_id, w.id, w.tx.clone(), meta)
-                            .await;
+                        if !self.registry.bind_writer(conn_id, w.id, meta).await {
+                            debug!(
+                                conn_id,
+                                writer_id = w.id,
+                                "ME writer disappeared before bind commit, retrying"
+                            );
+                            continue;
+                        }
                         if w.generation < self.current_generation() {
                             self.stats.increment_pool_stale_pick_total();
                             debug!(
@@ -421,9 +426,14 @@ impl MePool {
                 Ok(()) => {
                     self.stats
                         .increment_me_writer_pick_success_fallback_total(pick_mode);
-                    self.registry
-                        .bind_writer(conn_id, w.id, w.tx.clone(), meta)
-                        .await;
+                    if !self.registry.bind_writer(conn_id, w.id, meta).await {
+                        debug!(
+                            conn_id,
+                            writer_id = w.id,
+                            "ME writer disappeared before fallback bind commit, retrying"
+                        );
+                        continue;
+                    }
                     if w.generation < self.current_generation() {
                         self.stats.increment_pool_stale_pick_total();
                     }
