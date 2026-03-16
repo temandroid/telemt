@@ -83,6 +83,13 @@ metrics_whitelist = ["127.0.0.1/32", "::1/128", "0.0.0.0/0"]
 public_host = "proxy.example.com"
 ```
 
+### Общий лимит подключений к серверу
+Ограничивает общее число открытых подключений к серверу:
+```toml
+[server]
+max_connections = 10000    # 0 - unlimited, 10000 - default
+```
+
 ### Upstream Manager
 Чтобы указать апстрим, добавьте в секцию `[[upstreams]]` файла config.toml:
 #### Привязка к IP
@@ -113,3 +120,4 @@ password = "pass"          # Password for Auth on SOCKS-server
 weight = 1                 # Set Weight for Scenarios
 enabled = true
 ```
+
