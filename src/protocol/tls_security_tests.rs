@@ -9,12 +9,19 @@ use crate::crypto::sha256_hmac;
 ///   [TLS_DIGEST_POS..+32]       : digest = HMAC XOR [0..0 || timestamp_le]
 ///   [TLS_DIGEST_POS+32]         : session_id_len = 32
 ///   [TLS_DIGEST_POS+33..+65]    : session_id filler (0x42)
-fn make_valid_tls_handshake(secret: &[u8], timestamp: u32) -> Vec<u8> {
-    let session_id_len: usize = 32;
+fn make_valid_tls_handshake_with_session_id(
+    secret: &[u8],
+    timestamp: u32,
+    session_id: &[u8],
+) -> Vec<u8> {
+    let session_id_len = session_id.len();
+    assert!(session_id_len <= u8::MAX as usize);
     let len = TLS_DIGEST_POS + TLS_DIGEST_LEN + 1 + session_id_len;
     let mut handshake = vec![0x42u8; len];
 
     handshake[TLS_DIGEST_POS + TLS_DIGEST_LEN] = session_id_len as u8;
+    let sid_start = TLS_DIGEST_POS + TLS_DIGEST_LEN + 1;
+    handshake[sid_start..sid_start + session_id_len].copy_from_slice(session_id);
     // Zero the digest slot before computing HMAC (mirrors what validate does).
     handshake[TLS_DIGEST_POS..TLS_DIGEST_POS + TLS_DIGEST_LEN].fill(0);
 
@@ -32,6 +39,10 @@ fn make_valid_tls_handshake(secret: &[u8], timestamp: u32) -> Vec<u8> {
     handshake[TLS_DIGEST_POS..TLS_DIGEST_POS + TLS_DIGEST_LEN]
         .copy_from_slice(&digest);
     handshake
+}
+
+fn make_valid_tls_handshake(secret: &[u8], timestamp: u32) -> Vec<u8> {
+    make_valid_tls_handshake_with_session_id(secret, timestamp, &[0x42; 32])
 }
 
 // ------------------------------------------------------------------
@@ -312,6 +323,20 @@ fn too_short_handshake_rejected_without_panic() {
 }
 
 #[test]
+fn all_prefix_lengths_below_minimum_rejected_without_panic() {
+    let min_len = TLS_DIGEST_POS + TLS_DIGEST_LEN + 1;
+    let secrets = vec![("u".to_string(), b"s".to_vec())];
+
+    for len in 0..min_len {
+        let h = vec![0u8; len];
+        assert!(
+            validate_tls_handshake(&h, &secrets, true).is_none(),
+            "prefix length {len} below minimum must be rejected"
+        );
+    }
+}
+
+#[test]
 fn claimed_session_id_overflows_buffer_rejected() {
     let session_id_len: usize = 32;
     let min_len = TLS_DIGEST_POS + TLS_DIGEST_LEN + 1 + session_id_len;
@@ -330,6 +355,30 @@ fn max_session_id_len_255_does_not_panic() {
     h[TLS_DIGEST_POS + TLS_DIGEST_LEN] = 255;
     let secrets = vec![("u".to_string(), b"s".to_vec())];
     assert!(validate_tls_handshake(&h, &secrets, true).is_none());
+}
+
+#[test]
+fn one_byte_session_id_validates_and_is_preserved() {
+    let secret = b"sid_len_1_test";
+    let handshake = make_valid_tls_handshake_with_session_id(secret, 0, &[0xAB]);
+    let secrets = vec![("u".to_string(), secret.to_vec())];
+
+    let result = validate_tls_handshake(&handshake, &secrets, true)
+        .expect("one-byte session_id handshake must validate");
+    assert_eq!(result.session_id, vec![0xAB]);
+}
+
+#[test]
+fn max_session_id_len_255_with_valid_digest_is_accepted() {
+    let secret = b"sid_len_255_test";
+    let session_id = vec![0xCCu8; 255];
+    let handshake = make_valid_tls_handshake_with_session_id(secret, 0, &session_id);
+    let secrets = vec![("u".to_string(), secret.to_vec())];
+
+    let result = validate_tls_handshake(&handshake, &secrets, true)
+        .expect("session_id_len=255 with valid digest must validate");
+    assert_eq!(result.session_id.len(), 255);
+    assert_eq!(result.session_id, session_id);
 }
 
 // ------------------------------------------------------------------
@@ -868,6 +917,23 @@ fn test_parse_tls_record_header() {
 }
 
 #[test]
+fn parse_tls_record_header_rejects_invalid_versions() {
+    let invalid = [
+        [0x16, 0x03, 0x00, 0x00, 0x10],
+        [0x16, 0x02, 0x00, 0x00, 0x10],
+        [0x16, 0x03, 0x02, 0x00, 0x10],
+        [0x16, 0x04, 0x00, 0x00, 0x10],
+    ];
+    for header in invalid {
+        assert!(
+            parse_tls_record_header(&header).is_none(),
+            "invalid TLS record version {:?} must be rejected",
+            [header[1], header[2]]
+        );
+    }
+}
+
+#[test]
 fn test_gen_fake_x25519_key() {
     let rng = crate::crypto::SecureRandom::new();
     let key1 = gen_fake_x25519_key(&rng);
@@ -1166,6 +1232,47 @@ fn extract_sni_rejects_when_extension_block_is_truncated() {
     let mut ch = build_client_hello_with_raw_extensions(&ext_blob);
     ch.pop();
     assert!(extract_sni_from_client_hello(&ch).is_none());
+}
+
+#[test]
+fn extract_sni_rejects_session_id_len_overflow() {
+    let mut ch = build_client_hello_with_exts(Vec::new(), "example.com");
+    let sid_len_pos = 5 + 4 + 2 + 32;
+    ch[sid_len_pos] = 255;
+    assert!(extract_sni_from_client_hello(&ch).is_none());
+}
+
+#[test]
+fn extract_sni_rejects_cipher_suites_len_overflow() {
+    let mut ch = build_client_hello_with_exts(Vec::new(), "example.com");
+    let sid_len_pos = 5 + 4 + 2 + 32;
+    let cipher_len_pos = sid_len_pos + 1 + ch[sid_len_pos] as usize;
+    ch[cipher_len_pos] = 0xFF;
+    ch[cipher_len_pos + 1] = 0xFF;
+    assert!(extract_sni_from_client_hello(&ch).is_none());
+}
+
+#[test]
+fn extract_sni_rejects_compression_methods_len_overflow() {
+    let mut ch = build_client_hello_with_exts(Vec::new(), "example.com");
+    let sid_len_pos = 5 + 4 + 2 + 32;
+    let cipher_len_pos = sid_len_pos + 1 + ch[sid_len_pos] as usize;
+    let cipher_len = u16::from_be_bytes([ch[cipher_len_pos], ch[cipher_len_pos + 1]]) as usize;
+    let comp_len_pos = cipher_len_pos + 2 + cipher_len;
+    ch[comp_len_pos] = 0xFF;
+    assert!(extract_sni_from_client_hello(&ch).is_none());
+}
+
+#[test]
+fn extract_alpn_returns_empty_on_session_id_len_overflow() {
+    let mut alpn_data = Vec::new();
+    alpn_data.extend_from_slice(&3u16.to_be_bytes());
+    alpn_data.push(2);
+    alpn_data.extend_from_slice(b"h2");
+    let mut ch = build_client_hello_with_exts(vec![(0x0010, alpn_data)], "alpn.test");
+    let sid_len_pos = 5 + 4 + 2 + 32;
+    ch[sid_len_pos] = 255;
+    assert!(extract_alpn_from_client_hello(&ch).is_empty());
 }
 
 #[test]

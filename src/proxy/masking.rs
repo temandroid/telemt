@@ -223,10 +223,10 @@ async fn relay_to_mask<R, W, MR, MW>(
     initial_data: &[u8],
 )
 where
-    R: AsyncRead + Unpin + Send,
-    W: AsyncWrite + Unpin + Send,
-    MR: AsyncRead + Unpin + Send,
-    MW: AsyncWrite + Unpin + Send,
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+    MR: AsyncRead + Unpin + Send + 'static,
+    MW: AsyncWrite + Unpin + Send + 'static,
 {
     // Send initial data to mask host
     if mask_write.write_all(initial_data).await.is_err() {
@@ -236,39 +236,16 @@ where
         return;
     }
 
-    let mut client_buf = vec![0u8; MASK_BUFFER_SIZE];
-    let mut mask_buf = vec![0u8; MASK_BUFFER_SIZE];
-
-    loop {
-        tokio::select! {
-            client_read = reader.read(&mut client_buf) => {
-                match client_read {
-                    Ok(0) | Err(_) => {
-                        let _ = mask_write.shutdown().await;
-                        break;
-                    }
-                    Ok(n) => {
-                        if mask_write.write_all(&client_buf[..n]).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-            mask_read_res = mask_read.read(&mut mask_buf) => {
-                match mask_read_res {
-                    Ok(0) | Err(_) => {
-                        let _ = writer.shutdown().await;
-                        break;
-                    }
-                    Ok(n) => {
-                        if writer.write_all(&mask_buf[..n]).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
+    let _ = tokio::join!(
+        async {
+            let _ = tokio::io::copy(&mut reader, &mut mask_write).await;
+            let _ = mask_write.shutdown().await;
+        },
+        async {
+            let _ = tokio::io::copy(&mut mask_read, &mut writer).await;
+            let _ = writer.shutdown().await;
         }
-    }
+    );
 }
 
 /// Just consume all data from client without responding

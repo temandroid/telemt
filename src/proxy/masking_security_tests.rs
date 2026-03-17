@@ -1,12 +1,14 @@
 use super::*;
 use crate::config::ProxyConfig;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{duplex, AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::UnixListener;
-use tokio::time::{timeout, Duration};
+use tokio::time::{sleep, timeout, Duration};
 
 #[tokio::test]
 async fn bad_client_probe_is_forwarded_verbatim_to_mask_backend() {
@@ -542,9 +544,188 @@ impl tokio::io::AsyncWrite for PendingWriter {
     }
 }
 
+struct DropTrackedPendingReader {
+    dropped: Arc<AtomicBool>,
+}
+
+impl tokio::io::AsyncRead for DropTrackedPendingReader {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Poll::Pending
+    }
+}
+
+impl Drop for DropTrackedPendingReader {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+struct DropTrackedPendingWriter {
+    dropped: Arc<AtomicBool>,
+}
+
+impl tokio::io::AsyncWrite for DropTrackedPendingWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Poll::Pending
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl Drop for DropTrackedPendingWriter {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
 #[tokio::test]
 async fn proxy_header_write_timeout_returns_false() {
     let mut writer = PendingWriter;
     let ok = write_proxy_header_with_timeout(&mut writer, b"PROXY UNKNOWN\r\n").await;
     assert!(!ok, "Proxy header writes that never complete must time out");
+}
+
+#[tokio::test]
+async fn relay_to_mask_keeps_backend_to_client_flow_when_client_to_backend_stalls() {
+    let (mut client_feed_writer, client_feed_reader) = duplex(64);
+    let (mut client_visible_reader, client_visible_writer) = duplex(64);
+    let (mut backend_feed_writer, backend_feed_reader) = duplex(64);
+
+    // Make client->mask direction immediately active so the c2m path blocks on PendingWriter.
+    client_feed_writer.write_all(b"X").await.unwrap();
+
+    let relay = tokio::spawn(async move {
+        relay_to_mask(
+            client_feed_reader,
+            client_visible_writer,
+            backend_feed_reader,
+            PendingWriter,
+            b"",
+        )
+        .await;
+    });
+
+    // Allow relay tasks to start, then emulate mask backend response.
+    sleep(Duration::from_millis(20)).await;
+    backend_feed_writer.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await.unwrap();
+    backend_feed_writer.shutdown().await.unwrap();
+
+    let mut observed = vec![0u8; 19];
+    timeout(Duration::from_secs(1), client_visible_reader.read_exact(&mut observed))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed, b"HTTP/1.1 200 OK\r\n\r\n");
+
+    relay.abort();
+    let _ = relay.await;
+}
+
+#[tokio::test]
+async fn relay_to_mask_preserves_backend_response_after_client_half_close() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_addr = listener.local_addr().unwrap();
+    let request = b"GET / HTTP/1.1\r\nHost: front.example\r\n\r\n".to_vec();
+    let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec();
+
+    let backend_task = tokio::spawn({
+        let request = request.clone();
+        let response = response.clone();
+        async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut observed_req = vec![0u8; request.len()];
+            stream.read_exact(&mut observed_req).await.unwrap();
+            assert_eq!(observed_req, request);
+            stream.write_all(&response).await.unwrap();
+            stream.shutdown().await.unwrap();
+        }
+    });
+
+    let mut config = ProxyConfig::default();
+    config.general.beobachten = false;
+    config.censorship.mask = true;
+    config.censorship.mask_host = Some("127.0.0.1".to_string());
+    config.censorship.mask_port = backend_addr.port();
+    config.censorship.mask_unix_sock = None;
+    config.censorship.mask_proxy_protocol = 0;
+
+    let peer: SocketAddr = "203.0.113.77:55001".parse().unwrap();
+    let local_addr: SocketAddr = "127.0.0.1:443".parse().unwrap();
+
+    let (mut client_write, client_read) = duplex(1024);
+    let (mut client_visible_reader, client_visible_writer) = duplex(2048);
+    let beobachten = BeobachtenStore::new();
+
+    let fallback_task = tokio::spawn(async move {
+        handle_bad_client(
+            client_read,
+            client_visible_writer,
+            &request,
+            peer,
+            local_addr,
+            &config,
+            &beobachten,
+        )
+        .await;
+    });
+
+    client_write.shutdown().await.unwrap();
+
+    let mut observed_resp = vec![0u8; response.len()];
+    timeout(Duration::from_secs(1), client_visible_reader.read_exact(&mut observed_resp))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed_resp, response);
+
+    timeout(Duration::from_secs(1), fallback_task).await.unwrap().unwrap();
+    timeout(Duration::from_secs(1), backend_task).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn relay_to_mask_timeout_cancels_and_drops_all_io_endpoints() {
+    let reader_dropped = Arc::new(AtomicBool::new(false));
+    let writer_dropped = Arc::new(AtomicBool::new(false));
+    let mask_reader_dropped = Arc::new(AtomicBool::new(false));
+    let mask_writer_dropped = Arc::new(AtomicBool::new(false));
+
+    let reader = DropTrackedPendingReader {
+        dropped: reader_dropped.clone(),
+    };
+    let writer = DropTrackedPendingWriter {
+        dropped: writer_dropped.clone(),
+    };
+    let mask_read = DropTrackedPendingReader {
+        dropped: mask_reader_dropped.clone(),
+    };
+    let mask_write = DropTrackedPendingWriter {
+        dropped: mask_writer_dropped.clone(),
+    };
+
+    let timed = timeout(
+        Duration::from_millis(40),
+        relay_to_mask(reader, writer, mask_read, mask_write, b""),
+    )
+    .await;
+
+    assert!(timed.is_err(), "stalled relay must be bounded by timeout");
+
+    assert!(reader_dropped.load(Ordering::SeqCst));
+    assert!(writer_dropped.load(Ordering::SeqCst));
+    assert!(mask_reader_dropped.load(Ordering::SeqCst));
+    assert!(mask_writer_dropped.load(Ordering::SeqCst));
 }

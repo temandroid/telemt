@@ -381,7 +381,7 @@ fn validate_tls_handshake_at_time_with_boot_cap(
     let mut msg = handshake.to_vec();
     msg[TLS_DIGEST_POS..TLS_DIGEST_POS + TLS_DIGEST_LEN].fill(0);
     
-    let mut first_match: Option<TlsValidation> = None;
+    let mut first_match: Option<(&String, u32)> = None;
 
     for (user, secret) in secrets {
         let computed = sha256_hmac(secret, &msg);
@@ -421,16 +421,16 @@ fn validate_tls_handshake_at_time_with_boot_cap(
         }
         
         if first_match.is_none() {
-            first_match = Some(TlsValidation {
-                user: user.clone(),
-                session_id: session_id.clone(),
-                digest,
-                timestamp,
-            });
+            first_match = Some((user, timestamp));
         }
     }
 
-    first_match
+    first_match.map(|(user, timestamp)| TlsValidation {
+        user: user.clone(),
+        session_id,
+        digest,
+        timestamp,
+    })
 }
 
 fn curve25519_prime() -> BigUint {
