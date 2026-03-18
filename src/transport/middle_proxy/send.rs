@@ -6,6 +6,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, warn};
 
@@ -28,6 +29,29 @@ const PICK_PENALTY_WARM: u64 = 200;
 const PICK_PENALTY_DRAINING: u64 = 600;
 const PICK_PENALTY_STALE: u64 = 300;
 const PICK_PENALTY_DEGRADED: u64 = 250;
+
+enum TimedSendError<T> {
+    Closed(T),
+    Timeout(T),
+}
+
+async fn send_writer_command_with_timeout(
+    tx: &mpsc::Sender<WriterCommand>,
+    cmd: WriterCommand,
+    timeout: Duration,
+) -> std::result::Result<(), TimedSendError<WriterCommand>> {
+    if timeout.is_zero() {
+        return tx.send(cmd).await.map_err(|err| TimedSendError::Closed(err.0));
+    }
+    match tokio::time::timeout(timeout, tx.reserve()).await {
+        Ok(Ok(permit)) => {
+            permit.send(cmd);
+            Ok(())
+        }
+        Ok(Err(_)) => Err(TimedSendError::Closed(cmd)),
+        Err(_) => Err(TimedSendError::Timeout(cmd)),
+    }
+}
 
 impl MePool {
     /// Send RPC_PROXY_REQ. `tag_override`: per-user ad_tag (from access.user_ad_tags); if None, uses pool default.
@@ -78,8 +102,18 @@ impl MePool {
         let mut hybrid_last_recovery_at: Option<Instant> = None;
         let hybrid_wait_step = self.me_route_no_writer_wait.max(Duration::from_millis(50));
         let mut hybrid_wait_current = hybrid_wait_step;
+        let hybrid_deadline = Instant::now() + self.me_route_hybrid_max_wait;
 
         loop {
+            if matches!(no_writer_mode, MeRouteNoWriterMode::HybridAsyncPersistent)
+                && Instant::now() >= hybrid_deadline
+            {
+                self.stats.increment_me_no_writer_failfast_total();
+                return Err(ProxyError::Proxy(
+                    "No ME writer available in hybrid wait window".into(),
+                ));
+            }
+            let mut skip_writer_id: Option<u64> = None;
             let current_meta = self
                 .registry
                 .get_meta(conn_id)
@@ -90,12 +124,30 @@ impl MePool {
                 match current.tx.try_send(WriterCommand::Data(current_payload.clone())) {
                     Ok(()) => return Ok(()),
                     Err(TrySendError::Full(cmd)) => {
-                        if current.tx.send(cmd).await.is_ok() {
-                            return Ok(());
+                        match send_writer_command_with_timeout(
+                            &current.tx,
+                            cmd,
+                            self.me_route_blocking_send_timeout,
+                        )
+                        .await
+                        {
+                            Ok(()) => return Ok(()),
+                            Err(TimedSendError::Closed(_)) => {
+                                warn!(writer_id = current.writer_id, "ME writer channel closed");
+                                self.remove_writer_and_close_clients(current.writer_id).await;
+                                continue;
+                            }
+                            Err(TimedSendError::Timeout(_)) => {
+                                debug!(
+                                    conn_id,
+                                    writer_id = current.writer_id,
+                                    timeout_ms = self.me_route_blocking_send_timeout.as_millis()
+                                        as u64,
+                                    "ME writer send timed out for bound writer, trying reroute"
+                                );
+                                skip_writer_id = Some(current.writer_id);
+                            }
                         }
-                        warn!(writer_id = current.writer_id, "ME writer channel closed");
-                        self.remove_writer_and_close_clients(current.writer_id).await;
-                        continue;
                     }
                     Err(TrySendError::Closed(_)) => {
                         warn!(writer_id = current.writer_id, "ME writer channel closed");
@@ -199,6 +251,9 @@ impl MePool {
                 candidate_indices = self
                     .candidate_indices_for_dc(&writers_snapshot, routed_dc, true)
                     .await;
+            }
+            if let Some(skip_writer_id) = skip_writer_id {
+                candidate_indices.retain(|idx| writers_snapshot[*idx].id != skip_writer_id);
             }
             if candidate_indices.is_empty() {
                 let pick_mode = self.writer_pick_mode();
@@ -422,7 +477,13 @@ impl MePool {
             self.stats.increment_me_writer_pick_blocking_fallback_total();
             let effective_our_addr = SocketAddr::new(w.source_ip, our_addr.port());
             let (payload, meta) = build_routed_payload(effective_our_addr);
-            match w.tx.send(WriterCommand::Data(payload.clone())).await {
+            match send_writer_command_with_timeout(
+                &w.tx,
+                WriterCommand::Data(payload.clone()),
+                self.me_route_blocking_send_timeout,
+            )
+            .await
+            {
                 Ok(()) => {
                     self.stats
                         .increment_me_writer_pick_success_fallback_total(pick_mode);
@@ -439,10 +500,19 @@ impl MePool {
                     }
                     return Ok(());
                 }
-                Err(_) => {
+                Err(TimedSendError::Closed(_)) => {
                     self.stats.increment_me_writer_pick_closed_total(pick_mode);
                     warn!(writer_id = w.id, "ME writer channel closed (blocking)");
                     self.remove_writer_and_close_clients(w.id).await;
+                }
+                Err(TimedSendError::Timeout(_)) => {
+                    self.stats.increment_me_writer_pick_full_total(pick_mode);
+                    debug!(
+                        conn_id,
+                        writer_id = w.id,
+                        timeout_ms = self.me_route_blocking_send_timeout.as_millis() as u64,
+                        "ME writer blocking fallback send timed out"
+                    );
                 }
             }
         }

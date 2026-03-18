@@ -462,6 +462,11 @@ pub struct GeneralConfig {
     #[serde(default = "default_me_c2me_channel_capacity")]
     pub me_c2me_channel_capacity: usize,
 
+    /// Maximum wait in milliseconds for enqueueing C2ME commands when the queue is full.
+    /// `0` keeps legacy unbounded wait behavior.
+    #[serde(default = "default_me_c2me_send_timeout_ms")]
+    pub me_c2me_send_timeout_ms: u64,
+
     /// Bounded wait in milliseconds for routing ME DATA to per-connection queue.
     /// `0` keeps legacy no-wait behavior.
     #[serde(default = "default_me_reader_route_data_wait_ms")]
@@ -716,6 +721,15 @@ pub struct GeneralConfig {
     #[serde(default = "default_me_route_no_writer_wait_ms")]
     pub me_route_no_writer_wait_ms: u64,
 
+    /// Maximum cumulative wait in milliseconds for hybrid no-writer mode before failfast.
+    #[serde(default = "default_me_route_hybrid_max_wait_ms")]
+    pub me_route_hybrid_max_wait_ms: u64,
+
+    /// Maximum wait in milliseconds for blocking ME writer channel send fallback.
+    /// `0` keeps legacy unbounded wait behavior.
+    #[serde(default = "default_me_route_blocking_send_timeout_ms")]
+    pub me_route_blocking_send_timeout_ms: u64,
+
     /// Number of inline recovery attempts in legacy mode.
     #[serde(default = "default_me_route_inline_recovery_attempts")]
     pub me_route_inline_recovery_attempts: u32,
@@ -921,6 +935,7 @@ impl Default for GeneralConfig {
             me_writer_cmd_channel_capacity: default_me_writer_cmd_channel_capacity(),
             me_route_channel_capacity: default_me_route_channel_capacity(),
             me_c2me_channel_capacity: default_me_c2me_channel_capacity(),
+            me_c2me_send_timeout_ms: default_me_c2me_send_timeout_ms(),
             me_reader_route_data_wait_ms: default_me_reader_route_data_wait_ms(),
             me_d2c_flush_batch_max_frames: default_me_d2c_flush_batch_max_frames(),
             me_d2c_flush_batch_max_bytes: default_me_d2c_flush_batch_max_bytes(),
@@ -975,6 +990,8 @@ impl Default for GeneralConfig {
             me_warn_rate_limit_ms: default_me_warn_rate_limit_ms(),
             me_route_no_writer_mode: MeRouteNoWriterMode::default(),
             me_route_no_writer_wait_ms: default_me_route_no_writer_wait_ms(),
+            me_route_hybrid_max_wait_ms: default_me_route_hybrid_max_wait_ms(),
+            me_route_blocking_send_timeout_ms: default_me_route_blocking_send_timeout_ms(),
             me_route_inline_recovery_attempts: default_me_route_inline_recovery_attempts(),
             me_route_inline_recovery_wait_ms: default_me_route_inline_recovery_wait_ms(),
             links: LinksConfig::default(),
@@ -1207,6 +1224,11 @@ pub struct ServerConfig {
     /// 0 means unlimited.
     #[serde(default = "default_server_max_connections")]
     pub max_connections: u32,
+
+    /// Maximum wait in milliseconds while acquiring a connection slot permit.
+    /// `0` keeps legacy unbounded wait behavior.
+    #[serde(default = "default_accept_permit_timeout_ms")]
+    pub accept_permit_timeout_ms: u64,
 }
 
 impl Default for ServerConfig {
@@ -1226,6 +1248,7 @@ impl Default for ServerConfig {
             api: ApiConfig::default(),
             listeners: Vec::new(),
             max_connections: default_server_max_connections(),
+            accept_permit_timeout_ms: default_accept_permit_timeout_ms(),
         }
     }
 }

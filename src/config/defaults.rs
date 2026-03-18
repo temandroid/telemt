@@ -36,12 +36,16 @@ const DEFAULT_ME_HEALTH_INTERVAL_MS_UNHEALTHY: u64 = 1000;
 const DEFAULT_ME_HEALTH_INTERVAL_MS_HEALTHY: u64 = 3000;
 const DEFAULT_ME_ADMISSION_POLL_MS: u64 = 1000;
 const DEFAULT_ME_WARN_RATE_LIMIT_MS: u64 = 5000;
+const DEFAULT_ME_ROUTE_HYBRID_MAX_WAIT_MS: u64 = 3000;
+const DEFAULT_ME_ROUTE_BLOCKING_SEND_TIMEOUT_MS: u64 = 250;
+const DEFAULT_ME_C2ME_SEND_TIMEOUT_MS: u64 = 4000;
 const DEFAULT_ME_POOL_DRAIN_SOFT_EVICT_ENABLED: bool = true;
 const DEFAULT_ME_POOL_DRAIN_SOFT_EVICT_GRACE_SECS: u64 = 30;
 const DEFAULT_ME_POOL_DRAIN_SOFT_EVICT_PER_WRITER: u8 = 1;
 const DEFAULT_ME_POOL_DRAIN_SOFT_EVICT_BUDGET_PER_CORE: u16 = 8;
 const DEFAULT_ME_POOL_DRAIN_SOFT_EVICT_COOLDOWN_MS: u64 = 5000;
 const DEFAULT_USER_MAX_UNIQUE_IPS_WINDOW_SECS: u64 = 30;
+const DEFAULT_ACCEPT_PERMIT_TIMEOUT_MS: u64 = 250;
 const DEFAULT_UPSTREAM_CONNECT_RETRY_ATTEMPTS: u32 = 2;
 const DEFAULT_UPSTREAM_UNHEALTHY_FAIL_THRESHOLD: u32 = 5;
 const DEFAULT_UPSTREAM_CONNECT_BUDGET_MS: u64 = 3000;
@@ -154,6 +158,10 @@ pub(crate) fn default_proxy_protocol_header_timeout_ms() -> u64 {
 
 pub(crate) fn default_server_max_connections() -> u32 {
     10_000
+}
+
+pub(crate) fn default_accept_permit_timeout_ms() -> u64 {
+    DEFAULT_ACCEPT_PERMIT_TIMEOUT_MS
 }
 
 pub(crate) fn default_prefer_4() -> u8 {
@@ -378,6 +386,18 @@ pub(crate) fn default_me_admission_poll_ms() -> u64 {
 
 pub(crate) fn default_me_warn_rate_limit_ms() -> u64 {
     DEFAULT_ME_WARN_RATE_LIMIT_MS
+}
+
+pub(crate) fn default_me_route_hybrid_max_wait_ms() -> u64 {
+    DEFAULT_ME_ROUTE_HYBRID_MAX_WAIT_MS
+}
+
+pub(crate) fn default_me_route_blocking_send_timeout_ms() -> u64 {
+    DEFAULT_ME_ROUTE_BLOCKING_SEND_TIMEOUT_MS
+}
+
+pub(crate) fn default_me_c2me_send_timeout_ms() -> u64 {
+    DEFAULT_ME_C2ME_SEND_TIMEOUT_MS
 }
 
 pub(crate) fn default_upstream_connect_retry_attempts() -> u32 {

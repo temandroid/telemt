@@ -193,6 +193,8 @@ pub struct MePool {
     pub(super) me_reader_route_data_wait_ms: Arc<AtomicU64>,
     pub(super) me_route_no_writer_mode: AtomicU8,
     pub(super) me_route_no_writer_wait: Duration,
+    pub(super) me_route_hybrid_max_wait: Duration,
+    pub(super) me_route_blocking_send_timeout: Duration,
     pub(super) me_route_inline_recovery_attempts: u32,
     pub(super) me_route_inline_recovery_wait: Duration,
     pub(super) me_health_interval_ms_unhealthy: AtomicU64,
@@ -307,6 +309,8 @@ impl MePool {
         me_warn_rate_limit_ms: u64,
         me_route_no_writer_mode: MeRouteNoWriterMode,
         me_route_no_writer_wait_ms: u64,
+        me_route_hybrid_max_wait_ms: u64,
+        me_route_blocking_send_timeout_ms: u64,
         me_route_inline_recovery_attempts: u32,
         me_route_inline_recovery_wait_ms: u64,
     ) -> Arc<Self> {
@@ -490,6 +494,10 @@ impl MePool {
             me_reader_route_data_wait_ms: Arc::new(AtomicU64::new(me_reader_route_data_wait_ms)),
             me_route_no_writer_mode: AtomicU8::new(me_route_no_writer_mode.as_u8()),
             me_route_no_writer_wait: Duration::from_millis(me_route_no_writer_wait_ms),
+            me_route_hybrid_max_wait: Duration::from_millis(me_route_hybrid_max_wait_ms),
+            me_route_blocking_send_timeout: Duration::from_millis(
+                me_route_blocking_send_timeout_ms,
+            ),
             me_route_inline_recovery_attempts,
             me_route_inline_recovery_wait: Duration::from_millis(me_route_inline_recovery_wait_ms),
             me_health_interval_ms_unhealthy: AtomicU64::new(me_health_interval_ms_unhealthy.max(1)),

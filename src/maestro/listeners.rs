@@ -24,7 +24,7 @@ use crate::transport::{
     ListenOptions, UpstreamManager, create_listener, find_listener_processes,
 };
 
-use super::helpers::{is_expected_handshake_eof, print_proxy_links, wait_until_admission_open};
+use super::helpers::{is_expected_handshake_eof, print_proxy_links};
 
 pub(crate) struct BoundListeners {
     pub(crate) listeners: Vec<(TcpListener, bool)>,
@@ -195,7 +195,7 @@ pub(crate) async fn bind_listeners(
         has_unix_listener = true;
 
         let mut config_rx_unix: watch::Receiver<Arc<ProxyConfig>> = config_rx.clone();
-        let mut admission_rx_unix = admission_rx.clone();
+        let admission_rx_unix = admission_rx.clone();
         let stats = stats.clone();
         let upstream_manager = upstream_manager.clone();
         let replay_checker = replay_checker.clone();
@@ -212,17 +212,44 @@ pub(crate) async fn bind_listeners(
             let unix_conn_counter = Arc::new(std::sync::atomic::AtomicU64::new(1));
 
             loop {
-                if !wait_until_admission_open(&mut admission_rx_unix).await {
-                    warn!("Conditional-admission gate channel closed for unix listener");
-                    break;
-                }
                 match unix_listener.accept().await {
                     Ok((stream, _)) => {
-                        let permit = match max_connections_unix.clone().acquire_owned().await {
-                            Ok(permit) => permit,
-                            Err(_) => {
-                                error!("Connection limiter is closed");
-                                break;
+                        if !*admission_rx_unix.borrow() {
+                            drop(stream);
+                            continue;
+                        }
+                        let accept_permit_timeout_ms = config_rx_unix
+                            .borrow()
+                            .server
+                            .accept_permit_timeout_ms;
+                        let permit = if accept_permit_timeout_ms == 0 {
+                            match max_connections_unix.clone().acquire_owned().await {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    error!("Connection limiter is closed");
+                                    break;
+                                }
+                            }
+                        } else {
+                            match tokio::time::timeout(
+                                Duration::from_millis(accept_permit_timeout_ms),
+                                max_connections_unix.clone().acquire_owned(),
+                            )
+                            .await
+                            {
+                                Ok(Ok(permit)) => permit,
+                                Ok(Err(_)) => {
+                                    error!("Connection limiter is closed");
+                                    break;
+                                }
+                                Err(_) => {
+                                    debug!(
+                                        timeout_ms = accept_permit_timeout_ms,
+                                        "Dropping accepted unix connection: permit wait timeout"
+                                    );
+                                    drop(stream);
+                                    continue;
+                                }
                             }
                         };
                         let conn_id =
@@ -312,7 +339,7 @@ pub(crate) fn spawn_tcp_accept_loops(
 ) {
     for (listener, listener_proxy_protocol) in listeners {
         let mut config_rx: watch::Receiver<Arc<ProxyConfig>> = config_rx.clone();
-        let mut admission_rx_tcp = admission_rx.clone();
+        let admission_rx_tcp = admission_rx.clone();
         let stats = stats.clone();
         let upstream_manager = upstream_manager.clone();
         let replay_checker = replay_checker.clone();
@@ -327,17 +354,46 @@ pub(crate) fn spawn_tcp_accept_loops(
 
         tokio::spawn(async move {
             loop {
-                if !wait_until_admission_open(&mut admission_rx_tcp).await {
-                    warn!("Conditional-admission gate channel closed for tcp listener");
-                    break;
-                }
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        let permit = match max_connections_tcp.clone().acquire_owned().await {
-                            Ok(permit) => permit,
-                            Err(_) => {
-                                error!("Connection limiter is closed");
-                                break;
+                        if !*admission_rx_tcp.borrow() {
+                            debug!(peer = %peer_addr, "Admission gate closed, dropping connection");
+                            drop(stream);
+                            continue;
+                        }
+                        let accept_permit_timeout_ms = config_rx
+                            .borrow()
+                            .server
+                            .accept_permit_timeout_ms;
+                        let permit = if accept_permit_timeout_ms == 0 {
+                            match max_connections_tcp.clone().acquire_owned().await {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    error!("Connection limiter is closed");
+                                    break;
+                                }
+                            }
+                        } else {
+                            match tokio::time::timeout(
+                                Duration::from_millis(accept_permit_timeout_ms),
+                                max_connections_tcp.clone().acquire_owned(),
+                            )
+                            .await
+                            {
+                                Ok(Ok(permit)) => permit,
+                                Ok(Err(_)) => {
+                                    error!("Connection limiter is closed");
+                                    break;
+                                }
+                                Err(_) => {
+                                    debug!(
+                                        peer = %peer_addr,
+                                        timeout_ms = accept_permit_timeout_ms,
+                                        "Dropping accepted connection: permit wait timeout"
+                                    );
+                                    drop(stream);
+                                    continue;
+                                }
                             }
                         };
                         let config = config_rx.borrow_and_update().clone();

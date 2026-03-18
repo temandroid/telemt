@@ -205,6 +205,7 @@ pub(crate) fn format_uptime(total_secs: u64) -> String {
     format!("{} / {} seconds", parts.join(", "), total_secs)
 }
 
+#[allow(dead_code)]
 pub(crate) async fn wait_until_admission_open(admission_rx: &mut watch::Receiver<bool>) -> bool {
     loop {
         if *admission_rx.borrow() {

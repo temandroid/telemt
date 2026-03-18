@@ -612,6 +612,8 @@ fn warn_non_hot_changes(old: &ProxyConfig, new: &ProxyConfig, non_hot_changed: b
         || old.server.listen_tcp != new.server.listen_tcp
         || old.server.listen_unix_sock != new.server.listen_unix_sock
         || old.server.listen_unix_sock_perm != new.server.listen_unix_sock_perm
+        || old.server.max_connections != new.server.max_connections
+        || old.server.accept_permit_timeout_ms != new.server.accept_permit_timeout_ms
     {
         warned = true;
         warn!("config reload: server listener settings changed; restart required");
@@ -671,6 +673,9 @@ fn warn_non_hot_changes(old: &ProxyConfig, new: &ProxyConfig, non_hot_changed: b
     }
     if old.general.me_route_no_writer_mode != new.general.me_route_no_writer_mode
         || old.general.me_route_no_writer_wait_ms != new.general.me_route_no_writer_wait_ms
+        || old.general.me_route_hybrid_max_wait_ms != new.general.me_route_hybrid_max_wait_ms
+        || old.general.me_route_blocking_send_timeout_ms
+            != new.general.me_route_blocking_send_timeout_ms
         || old.general.me_route_inline_recovery_attempts
             != new.general.me_route_inline_recovery_attempts
         || old.general.me_route_inline_recovery_wait_ms
@@ -678,6 +683,10 @@ fn warn_non_hot_changes(old: &ProxyConfig, new: &ProxyConfig, non_hot_changed: b
     {
         warned = true;
         warn!("config reload: general.me_route_no_writer_* changed; restart required");
+    }
+    if old.general.me_c2me_send_timeout_ms != new.general.me_c2me_send_timeout_ms {
+        warned = true;
+        warn!("config reload: general.me_c2me_send_timeout_ms changed; restart required");
     }
     if old.general.unknown_dc_log_path != new.general.unknown_dc_log_path
         || old.general.unknown_dc_file_log_enabled != new.general.unknown_dc_file_log_enabled

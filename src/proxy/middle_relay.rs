@@ -222,6 +222,7 @@ fn should_yield_c2me_sender(sent_since_yield: usize, has_backlog: bool) -> bool 
 async fn enqueue_c2me_command(
     tx: &mpsc::Sender<C2MeCommand>,
     cmd: C2MeCommand,
+    send_timeout: Duration,
 ) -> std::result::Result<(), mpsc::error::SendError<C2MeCommand>> {
     match tx.try_send(cmd) {
         Ok(()) => Ok(()),
@@ -231,7 +232,17 @@ async fn enqueue_c2me_command(
             if tx.capacity() <= C2ME_SOFT_PRESSURE_MIN_FREE_SLOTS {
                 tokio::task::yield_now().await;
             }
-            tx.send(cmd).await
+            if send_timeout.is_zero() {
+                return tx.send(cmd).await;
+            }
+            match tokio::time::timeout(send_timeout, tx.reserve()).await {
+                Ok(Ok(permit)) => {
+                    permit.send(cmd);
+                    Ok(())
+                }
+                Ok(Err(_)) => Err(mpsc::error::SendError(cmd)),
+                Err(_) => Err(mpsc::error::SendError(cmd)),
+            }
         }
     }
 }
@@ -355,6 +366,7 @@ where
         .general
         .me_c2me_channel_capacity
         .max(C2ME_CHANNEL_CAPACITY_FALLBACK);
+    let c2me_send_timeout = Duration::from_millis(config.general.me_c2me_send_timeout_ms);
     let (c2me_tx, mut c2me_rx) = mpsc::channel::<C2MeCommand>(c2me_channel_capacity);
     let me_pool_c2me = me_pool.clone();
     let effective_tag = effective_tag;
@@ -363,15 +375,42 @@ where
         while let Some(cmd) = c2me_rx.recv().await {
             match cmd {
                 C2MeCommand::Data { payload, flags } => {
-                    me_pool_c2me.send_proxy_req(
-                        conn_id,
-                        success.dc_idx,
-                        peer,
-                        translated_local_addr,
-                        payload.as_ref(),
-                        flags,
-                        effective_tag.as_deref(),
-                    ).await?;
+                    if c2me_send_timeout.is_zero() {
+                        me_pool_c2me
+                            .send_proxy_req(
+                                conn_id,
+                                success.dc_idx,
+                                peer,
+                                translated_local_addr,
+                                payload.as_ref(),
+                                flags,
+                                effective_tag.as_deref(),
+                            )
+                            .await?;
+                    } else {
+                        match tokio::time::timeout(
+                            c2me_send_timeout,
+                            me_pool_c2me.send_proxy_req(
+                                conn_id,
+                                success.dc_idx,
+                                peer,
+                                translated_local_addr,
+                                payload.as_ref(),
+                                flags,
+                                effective_tag.as_deref(),
+                            ),
+                        )
+                        .await
+                        {
+                            Ok(send_result) => send_result?,
+                            Err(_) => {
+                                return Err(ProxyError::Proxy(format!(
+                                    "ME send timeout after {}ms",
+                                    c2me_send_timeout.as_millis()
+                                )));
+                            }
+                        }
+                    }
                     sent_since_yield = sent_since_yield.saturating_add(1);
                     if should_yield_c2me_sender(sent_since_yield, !c2me_rx.is_empty()) {
                         sent_since_yield = 0;
@@ -555,7 +594,7 @@ where
     loop {
         if session_lease.is_stale() {
             stats.increment_reconnect_stale_close_total();
-            let _ = enqueue_c2me_command(&c2me_tx, C2MeCommand::Close).await;
+            let _ = enqueue_c2me_command(&c2me_tx, C2MeCommand::Close, c2me_send_timeout).await;
             main_result = Err(ProxyError::Proxy("Session evicted by reconnect".to_string()));
             break;
         }
@@ -573,7 +612,7 @@ where
                 "Cutover affected middle session, closing client connection"
             );
             tokio::time::sleep(delay).await;
-            let _ = enqueue_c2me_command(&c2me_tx, C2MeCommand::Close).await;
+            let _ = enqueue_c2me_command(&c2me_tx, C2MeCommand::Close, c2me_send_timeout).await;
             main_result = Err(ProxyError::Proxy(ROUTE_SWITCH_ERROR_MSG.to_string()));
             break;
         }
@@ -607,9 +646,13 @@ where
                             flags |= RPC_FLAG_NOT_ENCRYPTED;
                         }
                         // Keep client read loop lightweight: route heavy ME send path via a dedicated task.
-                        if enqueue_c2me_command(&c2me_tx, C2MeCommand::Data { payload, flags })
-                            .await
-                            .is_err()
+                        if enqueue_c2me_command(
+                            &c2me_tx,
+                            C2MeCommand::Data { payload, flags },
+                            c2me_send_timeout,
+                        )
+                        .await
+                        .is_err()
                         {
                             main_result = Err(ProxyError::Proxy("ME sender channel closed".into()));
                             break;
@@ -618,7 +661,12 @@ where
                     Ok(None) => {
                         debug!(conn_id, "Client EOF");
                         client_closed = true;
-                        let _ = enqueue_c2me_command(&c2me_tx, C2MeCommand::Close).await;
+                        let _ = enqueue_c2me_command(
+                            &c2me_tx,
+                            C2MeCommand::Close,
+                            c2me_send_timeout,
+                        )
+                        .await;
                         break;
                     }
                     Err(e) => {
@@ -993,6 +1041,7 @@ mod tests {
                 payload: Bytes::from_static(&[1, 2, 3]),
                 flags: 0,
             },
+            TokioDuration::from_millis(50),
         )
         .await
         .unwrap();
@@ -1028,6 +1077,7 @@ mod tests {
                     payload: Bytes::from_static(&[7, 7]),
                     flags: 7,
                 },
+                TokioDuration::from_millis(100),
             )
             .await
             .unwrap();
